@@ -50,7 +50,7 @@ const uint16_t RSSI_MAX_VALUE = 65535;
 static uint32_t initialFreq;
 static char String[32];
 
-bool isInitialized = false;
+static bool isInitialized = false;
 bool isListening = true;
 bool monitorMode = false;
 bool redrawStatus = true;
@@ -64,7 +64,7 @@ State currentState = SPECTRUM, previousState = SPECTRUM;
 
 PeakInfo peak;
 ScanInfo scanInfo;
-KeyboardState kbd = {KEY_INVALID, KEY_INVALID, 0};
+static KeyboardState kbd = {KEY_INVALID, KEY_INVALID, 0};
 
 #ifdef ENABLE_SCAN_RANGES
 static uint16_t blacklistFreqs[15];
@@ -268,7 +268,7 @@ static void GUI_DisplaySmallest(const char *pString, uint8_t x, uint8_t y,
 
 // Utility functions
 
-KEY_Code_t GetKey()
+static KEY_Code_t GetKey()
 {
     KEY_Code_t btn = KEYBOARD_Poll();
     if (btn == KEY_INVALID && GPIO_IsPttPressed())
@@ -1495,7 +1495,7 @@ static void Render()
     ST7565_BlitFullScreen();
 }
 
-bool HandleUserInput()
+static bool HandleUserInput()
 {
     kbd.prev = kbd.current;
     kbd.current = GetKey();

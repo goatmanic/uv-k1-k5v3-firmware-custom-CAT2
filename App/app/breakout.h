@@ -14,6 +14,10 @@
  *     limitations under the License.
  */
 
+#pragma once
+
+#include "keyboard_state.h"
+
 #include "../bitmaps.h"
 #include "../board.h"
 #include "py32f0xx.h"
@@ -65,13 +69,6 @@ typedef struct {
     int8_t dx;  // move x
     int8_t dy;  // move y
 } Ball;
-
-typedef struct KeyboardState
-{
-    KEY_Code_t current;
-    KEY_Code_t prev;
-    uint8_t counter;
-} KeyboardState;
 
 void initWall(void);
 void drawWall(void);

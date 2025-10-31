@@ -17,6 +17,10 @@
 #ifndef SPECTRUM_H
 #define SPECTRUM_H
 
+#pragma once
+
+#include "keyboard_state.h"
+
 #include "../bitmaps.h"
 #include "../board.h"
 #include "py32f0xx.h"
@@ -155,13 +159,6 @@ typedef struct SpectrumSettings
     ModulationMode_t modulationType;
     bool backlightState;
 } SpectrumSettings;
-
-typedef struct KeyboardState
-{
-    KEY_Code_t current;
-    KEY_Code_t prev;
-    uint8_t counter;
-} KeyboardState;
 
 typedef struct ScanInfo
 {

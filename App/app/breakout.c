@@ -23,7 +23,7 @@
 static uint32_t randSeed = 1;
 static uint8_t blockAnim = 0;
 
-bool isInitialized = false;
+static bool isInitialized = false;
 bool isPaused = false;
 bool isBeep = false;
 
@@ -36,7 +36,7 @@ int16_t ballCount = BALL_NUMBER;
 
 char str[12];
 
-KeyboardState kbd = {KEY_INVALID, KEY_INVALID, 0};
+static KeyboardState kbd = {KEY_INVALID, KEY_INVALID, 0};
 
 Brick brick[BRICK_NUMBER];
 Racket racket;
@@ -403,7 +403,7 @@ static void OnKeyDown(uint8_t key)
 
 
 // Key 
-KEY_Code_t GetKey()
+static KEY_Code_t GetKey()
 {
     KEY_Code_t btn = KEYBOARD_Poll();
     if (btn == KEY_INVALID && GPIO_IsPttPressed())
@@ -414,7 +414,7 @@ KEY_Code_t GetKey()
 }
 
 // HandleUserInput 
-bool HandleUserInput()
+static bool HandleUserInput()
 {
     // Store previous key state
     kbd.prev = kbd.current;
