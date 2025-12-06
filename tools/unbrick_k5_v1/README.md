@@ -101,6 +101,10 @@ openocd \
   -c "init; reset halt; uv_flash_bl bootloader.bin; shutdown"
 `
 
+
+https://github.com/user-attachments/assets/a511fdb3-a3a3-4fe1-91cc-31e765221b22
+
+
 If no errors appear, the bootloader has been successfully restored. 
 
 - Disconnect and remove the ST-LINK from your UV-K5 V1 SWD port
