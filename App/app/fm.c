@@ -36,7 +36,7 @@
     #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
 #endif
 
-uint16_t          gFM_Channels[20];
+uint16_t          gFM_Channels[FM_CHANNELS_MAX];
 bool              gFmRadioMode;
 uint8_t           gFmRadioCountdown_500ms;
 volatile uint16_t gFmPlayCountdown_10ms;
@@ -318,7 +318,7 @@ static void Key_DIGITS(KEY_Code_t Key, uint8_t state)
                     return;
                 }
             }
-            else if (Channel < 20) {
+            else if (Channel < FM_CHANNELS_MAX) {
 #ifdef ENABLE_VOICE
                 gAnotherVoiceID = (VOICE_ID_t)Key;
 #endif
@@ -494,7 +494,7 @@ static void Key_UP_DOWN(uint8_t state, int8_t Step)
 
     if (gAskToSave) {
         gRequestDisplayScreen = DISPLAY_FM;
-        gFM_ChannelPosition   = NUMBER_AddWithWraparound(gFM_ChannelPosition, Step, 0, 19);
+        gFM_ChannelPosition   = NUMBER_AddWithWraparound(gFM_ChannelPosition, Step, 0, FM_CHANNELS_MAX - 1);
         return;
     }
 
@@ -598,10 +598,10 @@ void FM_Play(void)
             return;
         }
 
-        if (gFM_ChannelPosition < 20)
+        if (gFM_ChannelPosition < FM_CHANNELS_MAX)
             gFM_Channels[gFM_ChannelPosition++] = gEeprom.FM_FrequencyPlaying;
 
-        if (gFM_ChannelPosition >= 20) {
+        if (gFM_ChannelPosition >= FM_CHANNELS_MAX) {
             FM_PlayAndUpdate();
             GUI_SelectNextDisplay(DISPLAY_FM);
             return;
