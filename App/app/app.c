@@ -208,7 +208,7 @@ static void HandleIncoming(void)
         gFoundCTCSS = false;
     }
 
-    if (g_CDCSS_Lost && gCDCSSCodeType == CDCSS_POSITIVE_CODE
+    if (g_CDCSS_Lost && gCDCSSCodeType == CDCSS_NEGATIVE_CODE
         && (gCurrentCodeType == CODE_TYPE_DIGITAL || gCurrentCodeType == CODE_TYPE_REVERSE_DIGITAL))
     {
         gFoundCDCSS = false;
