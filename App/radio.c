@@ -477,7 +477,7 @@ void RADIO_ConfigureSquelchAndOutputPower(VFO_Info_t *pInfo)
 
     Band = FREQUENCY_GetBand(pInfo->pTX->Frequency);
 
-    // my eeprom calibration data 
+    // my eeprom calibration data on UV-K5 (V1)
     //
     // 1ED0 32 32 32 64 64 64 8c 8c 8c ff ff ff ff ff ff ff  50 MHz
     // 1EE0 32 32 32 64 64 64 8c 8c 8c ff ff ff ff ff ff ff 108 MHz
@@ -486,6 +486,15 @@ void RADIO_ConfigureSquelchAndOutputPower(VFO_Info_t *pInfo)
     // 1F10 5f 5f 5f 69 69 69 87 87 87 ff ff ff ff ff ff ff 350 MHz
     // 1F20 5f 5f 5f 69 69 69 87 87 87 ff ff ff ff ff ff ff 400 MHz
     // 1F30 32 32 32 64 64 64 8c 8c 8c ff ff ff ff ff ff ff 470 MHz
+
+    // my eeprom calibration data on UV-K1
+    //      32 32 32 64 64 64 8c 8c 8c ff ff ff ff ff ff ff  50 MHz
+    //      32 32 32 64 64 64 8c 8c 8c ff ff ff ff ff ff ff 108 MHz
+    //      4b 4b 4b 78 78 78 96 96 96 ff ff ff ff ff ff ff 137 MHz
+    //      32 32 32 64 64 64 8c 8c 8c ff ff ff ff ff ff ff 174 MHz
+    //      5a 5a 5a 64 64 64 a0 a0 a0 ff ff ff ff ff ff ff 350 MHz
+    //      4b 4b 4b 78 78 78 96 96 96 ff ff ff ff ff ff ff 400 MHz
+    //      32 32 32 64 64 64 94 8c 8c ff ff ff ff ff ff ff 470 MHz
 
     uint8_t Txp[3];
     uint8_t Op = 0; // Low eeprom calibration data 
@@ -566,7 +575,17 @@ void RADIO_ConfigureSquelchAndOutputPower(VFO_Info_t *pInfo)
     }
     */
 
-    static const uint8_t dividers[6] = { 25, 19, 13, 10, 7, 4};
+    //static const uint8_t dividers[6] = { 25, 19, 13, 10, 7, 4}; // For UV-K5 V1
+
+    static const uint8_t dividers_band2[6] = { 20, 15, 10, 8, 6, 4 };
+    static const uint8_t dividers_band5[6] = { 25, 19, 13, 9, 6, 4 }; // Need to improve measure...
+
+    const uint8_t *dividers;
+
+    if (Band == 2)  // VHF
+        dividers = dividers_band2;
+    else // UHF
+        dividers = dividers_band5;
 
     for (uint8_t p = 0; p < 3; p++)
     {
@@ -576,7 +595,8 @@ void RADIO_ConfigureSquelchAndOutputPower(VFO_Info_t *pInfo)
         }
         else // case 6
         {
-            Txp[p] += 30;
+            // Txp[p] += 30; // For UV-K5 V1
+            Txp[p] += 24;
         }
     }
 #else
