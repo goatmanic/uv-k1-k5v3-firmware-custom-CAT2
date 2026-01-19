@@ -69,14 +69,16 @@ void SETTINGS_InitEEPROM(void)
     #ifdef ENABLE_FEAT_F4HWN_NARROWER
         gEeprom.TAIL_TONE_ELIMINATION = Data[6] & 0x01;
         gSetting_set_nfm = (Data[6] >> 1) & 0x01;
+        #ifdef ENABLE_FEAT_F4HWN_RESUME_STATE
+            gEeprom.VFO_OPEN = ((Data[6] >> 2) & 0x01) != 0 ? true : true;
+        #endif
     #else
         gEeprom.TAIL_TONE_ELIMINATION = (Data[6] < 2) ? Data[6] : false;
     #endif
 
     #ifdef ENABLE_FEAT_F4HWN_RESUME_STATE
-        gEeprom.VFO_OPEN = Data[7] & 0x01;
-        gEeprom.CURRENT_STATE = (Data[7] >> 1) & 0x07;
-        gEeprom.CURRENT_LIST = (Data[7] >> 4) & 0x0F;
+        gEeprom.CURRENT_STATE =  Data[7]        & 0x07;   // bits 0..2
+        gEeprom.CURRENT_LIST  = (Data[7] >> 3)  & 0x1F;   // bits 3..7
     #else
         gEeprom.VFO_OPEN              = (Data[7] < 2) ? Data[7] : true;
     #endif
@@ -675,13 +677,19 @@ void SETTINGS_SaveSettings(void)
     #endif
 
     #ifdef ENABLE_FEAT_F4HWN_NARROWER
-        State[6] = (gEeprom.TAIL_TONE_ELIMINATION & 0x01) | ((gSetting_set_nfm & 0x03) << 1);
+        State[6] =
+            (gEeprom.TAIL_TONE_ELIMINATION & 0x01) |
+            ((gSetting_set_nfm & 0x01) << 1)
+        #ifdef ENABLE_FEAT_F4HWN_RESUME_STATE
+          | ((gEeprom.VFO_OPEN & 0x01) << 2)
+        #endif
+    ;
     #else
         State[6] = gEeprom.TAIL_TONE_ELIMINATION;
     #endif
 
     #ifdef ENABLE_FEAT_F4HWN_RESUME_STATE
-        State[7] = (gEeprom.VFO_OPEN & 0x01) | ((gEeprom.CURRENT_STATE & 0x07) << 1) | ((gEeprom.SCAN_LIST_DEFAULT & 0x0F) << 4);
+        State[7] = (gEeprom.CURRENT_STATE & 0x07) | ((gEeprom.SCAN_LIST_DEFAULT & 0x1F) << 3);
     #else
         State[7] = gEeprom.VFO_OPEN;
     #endif
@@ -1084,7 +1092,9 @@ State[1] = 0
         PY25Q16_ReadBuffer(0x00A000, State, sizeof(State));
         //State[11] = (gEeprom.CURRENT_STATE << 4) | (gEeprom.BATTERY_SAVE & 0x0F);
         //State[15] = (gEeprom.VFO_OPEN & 0x01) | ((gEeprom.CURRENT_STATE & 0x07) << 1) | ((gEeprom.SCAN_LIST_DEFAULT & 0x07) << 4);
-        State[15] = (gEeprom.VFO_OPEN & 0x01) | ((gEeprom.CURRENT_STATE & 0x07) << 1) | ((gEeprom.SCAN_LIST_DEFAULT & 0x0F) << 4);
+        State[15] =
+            (gEeprom.CURRENT_STATE & 0x07) |
+            ((gEeprom.SCAN_LIST_DEFAULT & 0x1F) << 3);
         PY25Q16_WriteBuffer(0x00A000, State, sizeof(State), false);
     }
 #endif

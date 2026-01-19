@@ -809,7 +809,7 @@ void UI_DisplayMain(void)
         {   // channel mode
             const unsigned int x = 3;
             const bool inputting = gInputBoxIndex != 0 && gEeprom.TX_VFO == vfo_num;
-            if (!inputting)
+            if (!inputting || gScanStateDir != SCAN_OFF)
                 sprintf(String, "M%03u", gEeprom.ScreenChannel[vfo_num] + 1);
             else
                 sprintf(String, "M%.3s", INPUTBOX_GetAscii());  // show the input text

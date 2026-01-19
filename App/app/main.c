@@ -435,6 +435,7 @@ static void MAIN_Key_DIGITS(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
     if (!gWasFKeyPressed) { // F-key wasn't pressed
 
         if (gScanStateDir != SCAN_OFF){
+            /*
             switch(Key) {
                 case KEY_0:
                     gEeprom.SCAN_LIST_DEFAULT = MR_CHANNELS_LIST + 1;
@@ -451,6 +452,59 @@ static void MAIN_Key_DIGITS(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
                 default:
                     break;
             }
+            return;
+            */
+
+            uint8_t Value;
+
+            INPUTBOX_Append(Key);
+
+            switch (gInputBoxIndex)
+            {
+                case 2:
+                    gInputBoxIndex = 0;
+
+                    Value = (gInputBox[0] * 10) + gInputBox[1];
+
+                    if (Value > 0 && Value <= MR_CHANNELS_LIST)
+                    {
+                        gEeprom.SCAN_LIST_DEFAULT = Value;
+                        #ifdef ENABLE_FEAT_F4HWN_RESUME_STATE
+                            SETTINGS_WriteCurrentState();
+                        #endif
+                        return;
+                    }
+
+                    if (Value <= MR_CHANNELS_LIST)
+                        break;
+
+                    gInputBox[0]   = gInputBox[1];
+                    gInputBoxIndex = 1;
+                    [[fallthrough]];
+                case 1:
+                    Value = gInputBox[0];
+                    if (Value == 0)
+                    {
+                        gEeprom.SCAN_LIST_DEFAULT = MR_CHANNELS_LIST + 1;
+                        #ifdef ENABLE_FEAT_F4HWN_RESUME_STATE
+                            SETTINGS_WriteCurrentState();
+                        #endif
+                        return;
+                    }
+                    else if (Value > 0 && Value <= MR_CHANNELS_LIST)
+                    {
+                        gEeprom.SCAN_LIST_DEFAULT = Value;
+                        #ifdef ENABLE_FEAT_F4HWN_RESUME_STATE
+                            SETTINGS_WriteCurrentState();
+                        #endif
+                        return;
+                    }
+                    break;
+            }
+
+            gInputBoxIndex = 0;
+
+            gBeepToPlay = BEEP_500HZ_60MS_DOUBLE_BEEP_OPTIONAL;
             return;
         }
 
