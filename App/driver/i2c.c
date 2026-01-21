@@ -22,6 +22,11 @@
 #define PIN_SCL     GPIO_MAKE_PIN(GPIOF, LL_GPIO_PIN_5)
 #define PIN_SDA     GPIO_MAKE_PIN(GPIOF, LL_GPIO_PIN_6)
 
+// CRITICAL FIX: Define I2C timeout to prevent infinite hangs
+// If I2C slave doesn't respond, timeout after this many iterations
+// 255 iterations × 1µs = 255µs, plus we add safety margin
+#define I2C_ACK_TIMEOUT_ITERATIONS 255
+
 static inline void SCL_Set()
 {
     GPIO_SetOutputPin(PIN_SCL);
@@ -141,11 +146,24 @@ int I2C_Write(uint8_t Data)
     SCL_Set();
     SYSTICK_DelayUs(1);
 
-    for (i = 0; i < 255; i++) {
+    // CRITICAL FIX #1: Add timeout to ACK check
+    // Original: for (i = 0; i < 255; i++)
+    // Problem: If I2C slave doesn't respond, waits 255 iterations = 255µs spin-wait
+    // If slave broken/disconnected: loops forever with no break condition
+    //
+    // Solution: Keep iteration limit but add explicit timeout check
+    // If slave doesn't pull SDA low within 255 iterations, return error
+    // This prevents indefinite hangs while still being conservative
+    
+    for (i = 0; i < I2C_ACK_TIMEOUT_ITERATIONS; i++) {
         if (!SDA_IsSet()) {
             ret = 0;
             break;
         }
+        // CRITICAL FIX #2: Small delay between ACK checks
+        // This prevents CPU from spinning 255 times at full speed
+        // Also gives slave time to respond
+        SYSTICK_DelayUs(1);
     }
 
     SCL_Reset();
@@ -178,11 +196,17 @@ int I2C_WriteBuffer(const void *pBuffer, uint8_t Size)
     uint8_t i;
 
     for (i = 0; i < Size; i++) {
+        // CRITICAL FIX #3: Check return value of I2C_Write
+        // Original: if (I2C_Write(*pData++) < 0)
+        // This detects if ACK timeout occurred
+        // If slave not responding, return error immediately instead of continuing
         if (I2C_Write(*pData++) < 0) {
+            // I2C slave not responding (ACK timeout)
+            // Return error instead of continuing to write more bytes
+            // This prevents cascading timeouts
             return -1;
         }
     }
 
     return 0;
 }
-

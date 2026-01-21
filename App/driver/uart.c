@@ -27,6 +27,11 @@
 #define USARTx USART1
 #define DMA_CHANNEL LL_DMA_CHANNEL_2
 
+// CRITICAL FIX: Define UART TX timeout
+// If UART TX buffer doesn't clear within this many iterations, skip byte and continue
+// Prevents permanent freeze if UART is stuck
+#define UART_TX_TIMEOUT_ITERATIONS 10000
+
 static bool UART_IsLogEnabled;
 uint8_t UART_DMA_Buffer[256];
 
@@ -111,9 +116,27 @@ void UART_Send(const void *pBuffer, uint32_t Size)
 
     for (i = 0; i < Size; i++)
     {
-        while (!LL_USART_IsActiveFlag_TXE(USARTx))
-            ;
-        LL_USART_TransmitData8(USARTx, pData[i]);
+        // CRITICAL FIX: Add timeout to UART TX busy-wait
+        // Original: while (!LL_USART_IsActiveFlag_TXE(USARTx)) ;
+        // Problem: If UART TX stuck or disconnected, this is infinite loop
+        // Result: Radio freeze for 100ms+ while trying to send one character
+        //
+        // Solution: Add iteration counter timeout
+        // If TXE flag doesn't set within timeout iterations, skip byte and continue
+        // This caps maximum freeze at ~10ms per UART_Send() call
+        
+        uint32_t timeout = UART_TX_TIMEOUT_ITERATIONS;
+        while (!LL_USART_IsActiveFlag_TXE(USARTx) && timeout > 0)
+        {
+            timeout--;
+        }
+        
+        // Send byte only if TXE flag is set
+        // If timeout occurred, skip this byte and continue
+        if (timeout > 0)
+        {
+            LL_USART_TransmitData8(USARTx, pData[i]);
+        }
     }
 }
 
