@@ -55,6 +55,9 @@ const char gModulationStr[MODULATION_UKNOWN][4] = {
 
 bool RADIO_CheckValidList(uint8_t scanList)
 {
+    if(scanList == MR_CHANNELS_LIST + 1)
+        return true;
+
     for (uint16_t i = 0; IS_MR_CHANNEL(i); i++) {
         const ChannelAttributes_t* att = MR_GetChannelAttributes(i);
         if(att->scanlist == scanList && att->exclude == false)
@@ -63,6 +66,31 @@ bool RADIO_CheckValidList(uint8_t scanList)
         }
     }
     return false;
+}
+
+void RADIO_NextValidList(void)
+{
+    uint8_t startList = gEeprom.SCAN_LIST_DEFAULT;
+    uint8_t attempts = 0;
+    const uint8_t MAX_LISTS = MR_CHANNELS_LIST + 2;  // 1-25, includes ALL
+    
+    do {
+        // Move to next scan list, wrapping around from 25 to 1
+        gEeprom.SCAN_LIST_DEFAULT = ((gEeprom.SCAN_LIST_DEFAULT + 1) % MAX_LISTS) ?: 1;
+        attempts++;
+        
+        // Check if current list has valid channels
+        if (RADIO_CheckValidList(gEeprom.SCAN_LIST_DEFAULT))
+            return;
+            
+    // Stop if we've cycled through all lists or made too many attempts
+    } while (gEeprom.SCAN_LIST_DEFAULT != startList && attempts < MAX_LISTS);
+    
+    // Safety fallback: if no valid list found, switch to ALL mode
+    // This prevents infinite loops and ensures scanning can continue
+    if (!RADIO_CheckValidList(gEeprom.SCAN_LIST_DEFAULT)) {
+        gEeprom.SCAN_LIST_DEFAULT = MR_CHANNELS_LIST + 1;  // ALL
+    }
 }
 
 bool RADIO_CheckValidChannel(uint16_t channel, bool checkScanList, uint8_t scanList)

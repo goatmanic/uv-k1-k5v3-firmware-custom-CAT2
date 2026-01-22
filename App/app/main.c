@@ -750,6 +750,8 @@ static void MAIN_Key_MENU(bool bKeyPressed, bool bKeyHeld)
                     ChannelAttributes_t *att = MR_GetChannelAttributes(lastFoundFrqOrChan);
                     att->exclude = true;
 
+                    MR_SaveChannelAttributesToFlash(lastFoundFrqOrChan, att);
+
                     gVfoConfigureMode = VFO_CONFIGURE;
                     gFlagResetVfos    = true;
 

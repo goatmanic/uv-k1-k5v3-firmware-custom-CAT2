@@ -230,7 +230,7 @@ void ACTION_Scan(bool bRestart)
         }
 
         // channel mode. Keep scanning but toggle between scan lists
-        gEeprom.SCAN_LIST_DEFAULT = ((gEeprom.SCAN_LIST_DEFAULT + 1) % (MR_CHANNELS_LIST + 2)) ?: 1;
+        RADIO_NextValidList();
 
         #ifdef ENABLE_FEAT_F4HWN_RESUME_STATE
             SETTINGS_WriteCurrentState();

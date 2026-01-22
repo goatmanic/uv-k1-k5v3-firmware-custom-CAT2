@@ -52,7 +52,13 @@ void CHFRSCANNER_Start(const bool storeBackupSettings, const int8_t scan_directi
     gScanStateDir    = scan_direction;
 
     if (IS_MR_CHANNEL(gNextMrChannel))
-    {   // channel mode
+    {   
+
+        if(!RADIO_CheckValidList(gEeprom.SCAN_LIST_DEFAULT)) {
+            RADIO_NextValidList();
+        }
+
+        // channel mode
         if (storeBackupSettings) {
             initialFrqOrChan = gRxVfo->CHANNEL_SAVE;
             lastFoundFrqOrChan = initialFrqOrChan;

@@ -227,20 +227,20 @@ void PY25Q16_Init()
 
 void PY25Q16_ReadBuffer(uint32_t Address, void *pBuffer, uint32_t Size)
 {
-#ifdef DEBUG
-    printf("spi flash read: %06x %ld\n", Address, Size);
-#endif
     CS_Assert();
 
-    SPI_WriteByte(0x03); // Fast read
-    WriteAddr(Address);
+    SPI_WriteByte(0x03);      // Send read command
+    WriteAddr(Address);        // Send address (3 bytes)
 
-    if (Size >= 16)
+    // CRITICAL: Flush RX FIFO before DMA to remove residual data
+    while (LL_SPI_RX_FIFO_EMPTY != LL_SPI_GetRxFIFOLevel(SPIx))
     {
-        SPI_ReadBuf((uint8_t *)pBuffer, Size);
+        LL_SPI_ReceiveData8(SPIx);  // Read and discard
     }
-    else
-    {
+
+    if (Size >= 16) {
+        SPI_ReadBuf((uint8_t *)pBuffer, Size);
+    } else {
         for (uint32_t i = 0; i < Size; i++)
         {
             ((uint8_t *)(pBuffer))[i] = SPI_WriteByte(0xff);
@@ -470,11 +470,20 @@ void DMA1_Channel4_5_6_7_IRQHandler()
         LL_DMA_DisableIT_TC(DMA1, CHANNEL_RD);
         LL_DMA_ClearFlag_TC4(DMA1);
 
-        while (LL_SPI_TX_FIFO_EMPTY != LL_SPI_GetTxFIFOLevel(SPIx))
+        // Wait a tiny bit for SPI to finish
+        SYSTICK_DelayUs(10);  // ← ADD THIS
+
+        uint32_t timeout = 10000;
+        
+        while ((LL_SPI_TX_FIFO_EMPTY != LL_SPI_GetTxFIFOLevel(SPIx)) && timeout--)
             ;
-        while (LL_SPI_IsActiveFlag_BSY(SPIx))
+        
+        timeout = 10000;
+        while (LL_SPI_IsActiveFlag_BSY(SPIx) && timeout--)
             ;
-        while (LL_SPI_RX_FIFO_EMPTY != LL_SPI_GetRxFIFOLevel(SPIx))
+        
+        timeout = 10000;
+        while ((LL_SPI_RX_FIFO_EMPTY != LL_SPI_GetRxFIFOLevel(SPIx)) && timeout--)
             ;
 
         LL_SPI_DisableDMAReq_TX(SPIx);
