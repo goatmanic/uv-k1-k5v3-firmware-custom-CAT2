@@ -114,6 +114,12 @@ void (*action_opt_table[])(void) = {
     //#else
     //    [ACTION_OPT_MUTE] = &FUNCTION_NOP,
     //#endif
+    #ifdef ENABLE_FEAT_F4HWN_AUDIO
+        [ACTION_OPT_RXA] = &ACTION_RxA,
+    #else
+        [ACTION_OPT_RXA] = &FUNCTION_NOP,
+    #endif
+
     #ifdef ENABLE_FEAT_F4HWN_RESCUE_OPS
         [ACTION_OPT_POWER_HIGH] = &ACTION_Power_High,
         [ACTION_OPT_REMOVE_OFFSET] = &ACTION_Remove_Offset,
@@ -536,6 +542,14 @@ void ACTION_MainOnly(void)
     ACTION_Update();
 }
 
+#ifdef ENABLE_FEAT_F4HWN_AUDIO
+void ACTION_RxA(void)
+{
+    gSetting_set_audio = (gSetting_set_audio + 1) % 5;
+    RADIO_SetModulation(gRxVfo->Modulation);
+}
+#endif
+
 void ACTION_Ptt(void)
 {
     gSetting_set_ptt_session = !gSetting_set_ptt_session;
@@ -633,38 +647,36 @@ void ACTION_BackLightOnDemand(void)
     BACKLIGHT_TurnOn();
 }
 
-    //#if !defined(ENABLE_SPECTRUM) || !defined(ENABLE_FMRADIO)
-    void ACTION_Mute(void)
-    {
-        // Toggle mute state
-        gMute = !gMute;
+void ACTION_Mute(void)
+{
+    // Toggle mute state
+    gMute = !gMute;
 
-        // Update the registers
-        #ifdef ENABLE_FMRADIO
-            BK1080_WriteRegister(BK1080_REG_05_SYSTEM_CONFIGURATION2, gMute ? 0x0A10 : 0x0A1F);
-        #endif
-        gEeprom.VOLUME_GAIN = gMute ? 0 : gEeprom.VOLUME_GAIN_BACKUP;
-        BK4819_WriteRegister(BK4819_REG_48,
-            (11u << 12)                |  // ??? .. 0 ~ 15, doesn't seem to make any difference
-            (0u << 10)                 |  // AF Rx Gain-1
-            (gEeprom.VOLUME_GAIN << 4) |  // AF Rx Gain-2
-            (gEeprom.DAC_GAIN << 0));     // AF DAC Gain (after Gain-1 and Gain-2)
-
-        gUpdateStatus = true;
-    }
-    //#endif
-
-    #ifdef ENABLE_FEAT_F4HWN_RESCUE_OPS
-    void ACTION_Power_High(void)
-    {
-        gPowerHigh = !gPowerHigh;
-        gVfoConfigureMode = VFO_CONFIGURE_RELOAD;
-    }
-
-    void ACTION_Remove_Offset(void)
-    {
-        gRemoveOffset = !gRemoveOffset;
-        gVfoConfigureMode = VFO_CONFIGURE_RELOAD;
-    }
+    // Update the registers
+    #ifdef ENABLE_FMRADIO
+        BK1080_WriteRegister(BK1080_REG_05_SYSTEM_CONFIGURATION2, gMute ? 0x0A10 : 0x0A1F);
     #endif
+    gEeprom.VOLUME_GAIN = gMute ? 0 : gEeprom.VOLUME_GAIN_BACKUP;
+    BK4819_WriteRegister(BK4819_REG_48,
+        (11u << 12)                |  // ??? .. 0 ~ 15, doesn't seem to make any difference
+        (0u << 10)                 |  // AF Rx Gain-1
+        (gEeprom.VOLUME_GAIN << 4) |  // AF Rx Gain-2
+        (gEeprom.DAC_GAIN << 0));     // AF DAC Gain (after Gain-1 and Gain-2)
+
+    gUpdateStatus = true;
+}
+
+#ifdef ENABLE_FEAT_F4HWN_RESCUE_OPS
+void ACTION_Power_High(void)
+{
+    gPowerHigh = !gPowerHigh;
+    gVfoConfigureMode = VFO_CONFIGURE_RELOAD;
+}
+
+void ACTION_Remove_Offset(void)
+{
+    gRemoveOffset = !gRemoveOffset;
+    gVfoConfigureMode = VFO_CONFIGURE_RELOAD;
+}
+#endif
 #endif

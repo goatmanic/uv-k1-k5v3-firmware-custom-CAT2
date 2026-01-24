@@ -37,6 +37,7 @@
 #include "ui/main.h"
 #include "ui/ui.h"
 #include "audio.h"
+#include "menu.h"
 
 #ifdef ENABLE_FEAT_F4HWN
     #include "driver/system.h"
@@ -760,7 +761,9 @@ void UI_DisplayMain(void)
                 if (activeTxVFO == vfo_num)
                 {   // show the TX symbol
                     mode = VFO_MODE_TX;
-                    UI_PrintStringSmallBold("TX", 8, 0, line);
+                    //UI_PrintStringSmallBold("TX", 8, 0, line);
+                    GUI_DisplaySmallest("TX", 10, line == 0 ? 1 : 33, false, true);
+
                 }
             }
         }
@@ -784,7 +787,14 @@ void UI_DisplayMain(void)
                 }
 
                 if (RxBlink == 0 || RxBlink == 1) {
-                    UI_PrintStringSmallBold("RX", 8, 0, RxLine);
+                    if(gRxVfo->Modulation == MODULATION_AM)
+                        GUI_DisplaySmallest("AIR", 10, RxLine == 0 ? 1 : 33, false, true);
+                    else {
+                        strcpy(String, gSubMenu_SET_AUD[gSetting_set_audio]);
+                        GUI_DisplaySmallest(String, 10, RxLine == 0 ? 1 : 33, false, true);
+                    }
+
+                    //UI_PrintStringSmallBold("RX", 8, 0, RxLine);
                 }
 #else
                 UI_PrintStringSmallBold("RX", 8, 0, line);
