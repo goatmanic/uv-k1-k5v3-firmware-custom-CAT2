@@ -70,6 +70,10 @@ target_link_libraries(${EXE_NAME} Core App)
 target_compile_definitions(${EXE_NAME} PRIVATE $<$<CONFIG:Debug>:DEBUG>)
 target_link_libraries(${EXE_NAME} ${TOOLCHAIN_LINK_LIBRARIES})
 
+if(ENABLE_LTO)
+    target_compile_options(${EXE_NAME} PRIVATE -flto=auto)
+endif()
+
 # Generate map file
 target_link_options(${EXE_NAME} PRIVATE "-Wl,-Map=${EXE_NAME}.map")
 
