@@ -53,6 +53,8 @@ SESSION_TIMEOUT_MS = 500
 SESSION_RETRY_INTERVAL_MS = 300
 BUTTON_ACK_TIMEOUT_MS = 700
 BUTTON_RETRY_LIMIT = 4
+MAX_CMD_MSG_LEN = 256
+MAX_CMD_BUFFER = 8192
 
 KEY_CODES = {
     "0": 0,
@@ -287,47 +289,59 @@ class K5Receiver(QtCore.QObject):
     def _fetch_cmd_packet(self) -> tuple[int, bytes] | None:
         buf = self._cmd_buffer
 
-        if len(buf) < 8:
-            return None
+        while True:
+            if len(buf) > MAX_CMD_BUFFER:
+                del buf[: len(buf) - MAX_CMD_BUFFER]
 
-        begin = buf.find(CMD_HEADER)
-        if begin < 0:
-            if buf.endswith(b"\xAB"):
-                del buf[:-1]
-            else:
-                del buf[:]
-            return None
+            if len(buf) < 8:
+                return None
 
-        if begin > 0:
-            del buf[:begin]
+            begin = buf.find(CMD_HEADER)
+            if begin < 0:
+                if buf.endswith(b"\xAB"):
+                    del buf[:-1]
+                else:
+                    del buf[:]
+                return None
 
-        if len(buf) < 8:
-            return None
+            if begin > 0:
+                del buf[:begin]
 
-        msg_len = buf[2] | (buf[3] << 8)
-        packet_end = 6 + msg_len
-        total = packet_end + 2
+            if len(buf) < 8:
+                return None
 
-        if len(buf) < total:
-            return None
+            msg_len = buf[2] | (buf[3] << 8)
+            if msg_len < 4 or msg_len > MAX_CMD_MSG_LEN or (msg_len % 2) != 0:
+                del buf[0]
+                continue
 
-        if buf[packet_end] != CMD_FOOTER[0] or buf[packet_end + 1] != CMD_FOOTER[1]:
-            del buf[:2]
-            return None
+            packet_end = 6 + msg_len
+            total = packet_end + 2
+            if len(buf) < total:
+                return None
 
-        body = bytearray(buf[4 : 4 + msg_len + 2])
-        self._obfus(body)
+            if buf[packet_end] != CMD_FOOTER[0] or buf[packet_end + 1] != CMD_FOOTER[1]:
+                del buf[0]
+                continue
 
-        msg = body[:-2]
-        if len(msg) < 2:
+            body = bytearray(buf[4 : 4 + msg_len + 2])
+            self._obfus(body)
+
+            msg = body[:-2]
+            if len(msg) < 4:
+                del buf[:total]
+                continue
+
+            declared_payload_len = msg[2] | (msg[3] << 8)
+            if declared_payload_len > (len(msg) - 4):
+                del buf[0]
+                continue
+
+            msg_type = msg[0] | (msg[1] << 8)
+            payload = bytes(msg[4 : 4 + declared_payload_len])
+
             del buf[:total]
-            return None
-
-        msg_type = msg[0] | (msg[1] << 8)
-        payload = bytes(msg[4:]) if len(msg) >= 4 else b""
-
-        del buf[:total]
-        return msg_type, payload
+            return msg_type, payload
 
     @staticmethod
     def _word_from_payload(payload: bytes, off: int = 0) -> int:
