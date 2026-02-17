@@ -149,10 +149,50 @@ void UART_LogSend(const void *pBuffer, uint32_t Size)
 
 #ifdef ENABLE_FEAT_F4HWN_SCREENSHOT
     bool UART_IsCableConnected(void) {
-        for (size_t i = 0; i < sizeof(UART_DMA_Buffer); i++) {
-            if (UART_DMA_Buffer[i] == 0x55) {
-                UART_DMA_Buffer[i] = 0x00;  // Clear only the matched byte
-                return true;
+        // Parse only fresh RX bytes from the DMA circular buffer.
+        // Valid screenshot keepalive pattern from viewer:
+        //   0x55 0xAA 0x00 0x00
+        static uint16_t read_ptr = 0;
+        static uint8_t  state = 0;
+
+        const uint16_t write_ptr = (uint16_t)(sizeof(UART_DMA_Buffer) - LL_DMA_GetDataLength(DMA1, DMA_CHANNEL));
+
+        while (read_ptr != write_ptr) {
+            const uint8_t b = UART_DMA_Buffer[read_ptr];
+
+            read_ptr++;
+            if (read_ptr >= sizeof(UART_DMA_Buffer)) {
+                read_ptr = 0;
+            }
+
+            switch (state) {
+                default:
+                case 0:
+                    state = (b == 0x55) ? 1 : 0;
+                    break;
+                case 1:
+                    if (b == 0xAA) {
+                        state = 2;
+                    } else {
+                        state = (b == 0x55) ? 1 : 0;
+                    }
+                    break;
+                case 2:
+                    if (b == 0x00) {
+                        state = 3;
+                    } else {
+                        state = (b == 0x55) ? 1 : 0;
+                    }
+                    break;
+                case 3:
+                    state = 0;
+                    if (b == 0x00) {
+                        return true;
+                    }
+                    if (b == 0x55) {
+                        state = 1;
+                    }
+                    break;
             }
         }
         return false;
