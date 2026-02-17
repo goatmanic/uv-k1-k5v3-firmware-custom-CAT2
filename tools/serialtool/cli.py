@@ -25,6 +25,7 @@ import os
 import _prog as pp
 import _dump as dd
 import _restore as rr
+import _button as bb
 
 
 def load_image(file: str) -> bytes:
@@ -139,6 +140,23 @@ def main_flash(args, ser: serial.Serial):
         sleep(0)
 
 
+
+def main_button(args, ser: serial.Serial):
+
+    ok, msg = bb.send_button(
+        ser,
+        key_name=args.key,
+        action_name=args.action,
+        seq=args.seq,
+        timeout_s=args.timeout,
+    )
+
+    if ok:
+        print(f"Button event sent: {msg}")
+    else:
+        print(f"Button event failed: {msg}")
+
+
 def main():
 
     # Usage:
@@ -198,6 +216,16 @@ def main():
     )
     ap_restore.add_argument("file", help="input dump file")
 
+
+    ap_button = sp.add_parser("button", help="send remote button event")
+    ap_button.add_argument(
+        "--port", "-p", help="serial port, eg., '/dev/ttyUSB0'", required=True
+    )
+    ap_button.add_argument("--key", required=True, help="button name, eg. MENU, UP, 1")
+    ap_button.add_argument("--action", required=True, choices=["press", "release"], help="button action")
+    ap_button.add_argument("--seq", type=int, default=1, help="event sequence (0..65535)")
+    ap_button.add_argument("--timeout", type=float, default=0.4, help="ack timeout in seconds")
+
     args = ap.parse_args()
     port: str = args.port
     sub_name: str = args.subcommand
@@ -218,6 +246,8 @@ def main():
             main_dump(args, ser)
         case "restore":
             main_restore(args, ser)
+        case "button":
+            main_button(args, ser)
 
     ser.close()
     print("Quit")

@@ -6,6 +6,7 @@ Features:
 - Keepalive sender (0x55 0xAA 0x00 0x00)
 - Live byte-level TX/RX logging windows
 - LCD-like 128x64 screen renderer
+- Remote keypad (button inject over UART command protocol)
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import sys
+import time
 from dataclasses import dataclass
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -26,6 +28,47 @@ KEEPALIVE = b"\x55\xAA\x00\x00"
 HEADER = b"\xAA\x55"
 TYPE_SCREENSHOT = 0x01
 TYPE_DIFF = 0x02
+
+# UART command protocol
+CMD_HEADER = b"\xAB\xCD"
+CMD_FOOTER = b"\xDC\xBA"
+OBFUS_TBL = b"\x16\x6c\x14\xe6\x2e\x91\x0d\x40\x21\x35\xd5\x40\x13\x03\xe9\x80"
+
+MSG_SESSION_INIT = 0x0514
+MSG_SESSION_INFO = 0x0515
+MSG_BUTTON_EVENT = 0x0610
+MSG_BUTTON_ACK = 0x0611
+
+ACTION_PRESS = 0
+ACTION_RELEASE = 1
+
+ACK_STATUS = {
+    0: "accepted",
+    1: "busy",
+    2: "invalid",
+    3: "stale",
+}
+
+KEY_CODES = {
+    "0": 0,
+    "1": 1,
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "6": 6,
+    "7": 7,
+    "8": 8,
+    "9": 9,
+    "MENU": 10,
+    "UP": 11,
+    "DOWN": 12,
+    "EXIT": 13,
+    "STAR": 14,
+    "F": 15,
+    "SIDE2": 17,
+    "SIDE1": 18,
+}
 
 
 @dataclass
@@ -90,17 +133,33 @@ class K5Receiver(QtCore.QObject):
         super().__init__(parent)
         self._serial = serial.Serial(port, baud, timeout=0)
         self._buffer = bytearray()
+        self._cmd_buffer = bytearray()
         self._frame = bytearray(FRAME_SIZE)
+
+        self._session_ts: int | None = None
+        self._session_pending = False
+        self._button_queue: list[tuple[int, int, str]] = []
+        self._next_seq = 1
+        self._inflight_seq: int | None = None
+        self._inflight_event: tuple[int, int, str] | None = None
+        self._inflight_deadline_ms = 0
+
         self._keepalive_timer = QtCore.QTimer(self)
         self._keepalive_timer.timeout.connect(self.send_keepalive)
         self._keepalive_timer.start(120)
+
         self._poll_timer = QtCore.QTimer(self)
         self._poll_timer.timeout.connect(self.poll)
         self._poll_timer.start(10)
 
+        self._button_timer = QtCore.QTimer(self)
+        self._button_timer.timeout.connect(self._service_button_tx)
+        self._button_timer.start(25)
+
     def close(self) -> None:
         self._keepalive_timer.stop()
         self._poll_timer.stop()
+        self._button_timer.stop()
         if self._serial.is_open:
             self._serial.close()
 
@@ -113,6 +172,17 @@ class K5Receiver(QtCore.QObject):
         except serial.SerialException as exc:
             self.status.emit(f"TX error: {exc}")
 
+    def queue_button_tap(self, key_name: str) -> None:
+        key_name = key_name.upper()
+        key_code = KEY_CODES.get(key_name)
+        if key_code is None:
+            self.status.emit(f"Unknown key: {key_name}")
+            return
+
+        self._button_queue.append((key_code, ACTION_PRESS, key_name))
+        self._button_queue.append((key_code, ACTION_RELEASE, key_name))
+        self.status.emit(f"Queued tap: {key_name}")
+
     def poll(self) -> None:
         if not self._serial.is_open:
             return
@@ -123,18 +193,19 @@ class K5Receiver(QtCore.QObject):
                 if data:
                     self.rx_log.emit(data)
                     self._buffer.extend(data)
-                    self._consume_buffer()
+                    self._cmd_buffer.extend(data)
+                    self._consume_screen_buffer()
+                    self._consume_cmd_buffer()
         except serial.SerialException as exc:
             self.status.emit(f"RX error: {exc}")
 
-    def _consume_buffer(self) -> None:
+    def _consume_screen_buffer(self) -> None:
         while True:
             if len(self._buffer) < 5:
                 return
 
             hdr = self._buffer.find(HEADER)
             if hdr < 0:
-                # keep tail for split headers
                 if len(self._buffer) > 1:
                     self._buffer[:] = self._buffer[-1:]
                 return
@@ -159,9 +230,196 @@ class K5Receiver(QtCore.QObject):
             elif msg_type == TYPE_DIFF and size % 9 == 0:
                 self._apply_diff(payload)
                 self.frame_ready.emit(bytearray(self._frame))
-                self.status.emit(f"Diff frame received ({size // 9} chunks)")
             else:
                 self.status.emit(f"Ignored frame type=0x{msg_type:02X} size={size}")
+
+    def _consume_cmd_buffer(self) -> None:
+        while True:
+            msg = self._fetch_cmd_packet()
+            if msg is None:
+                return
+
+            msg_type, payload = msg
+            if msg_type == MSG_SESSION_INFO:
+                self._session_pending = False
+                self.status.emit("Remote keypad session established")
+            elif msg_type == MSG_BUTTON_ACK and len(payload) >= 4:
+                seq = payload[0] | (payload[1] << 8)
+                status = payload[2]
+                qdepth = payload[3]
+
+                if self._inflight_seq is None:
+                    continue
+
+                if seq != self._inflight_seq:
+                    continue
+
+                event = self._inflight_event
+                self._inflight_seq = None
+                self._inflight_event = None
+
+                label = ACK_STATUS.get(status, f"unknown({status})")
+                if status == 0:
+                    self.status.emit(f"Button ACK: {label}, queue_depth={qdepth}")
+                elif status in (1, 3):
+                    # busy/stale -> retry event (front of queue)
+                    if event is not None:
+                        self._button_queue.insert(0, event)
+                    if status == 3:
+                        self._session_ts = None
+                        self._session_pending = False
+                    self.status.emit(f"Button ACK: {label}, retrying")
+                else:
+                    self.status.emit(f"Button ACK: {label}, dropped")
+
+    def _fetch_cmd_packet(self) -> tuple[int, bytes] | None:
+        buf = self._cmd_buffer
+
+        if len(buf) < 8:
+            return None
+
+        begin = buf.find(CMD_HEADER)
+        if begin < 0:
+            if buf.endswith(b"\xAB"):
+                del buf[:-1]
+            else:
+                del buf[:]
+            return None
+
+        if begin > 0:
+            del buf[:begin]
+
+        if len(buf) < 8:
+            return None
+
+        msg_len = buf[2] | (buf[3] << 8)
+        packet_end = 6 + msg_len
+        total = packet_end + 2
+
+        if len(buf) < total:
+            return None
+
+        if buf[packet_end] != CMD_FOOTER[0] or buf[packet_end + 1] != CMD_FOOTER[1]:
+            del buf[:2]
+            return None
+
+        body = bytearray(buf[4 : 4 + msg_len + 2])
+        self._obfus(body)
+
+        msg = body[:-2]
+        if len(msg) < 2:
+            del buf[:total]
+            return None
+
+        msg_type = msg[0] | (msg[1] << 8)
+        payload = bytes(msg[4:]) if len(msg) >= 4 else b""
+
+        del buf[:total]
+        return msg_type, payload
+
+    def _service_button_tx(self) -> None:
+        now_ms = int(time.time() * 1000)
+
+        if self._inflight_seq is not None and now_ms >= self._inflight_deadline_ms:
+            if self._inflight_event is not None:
+                self._button_queue.insert(0, self._inflight_event)
+            self._inflight_seq = None
+            self._inflight_event = None
+            self.status.emit("Button ACK timeout, retrying")
+
+        if self._inflight_seq is not None or not self._button_queue:
+            return
+
+        if self._session_pending:
+            return
+
+        if not self._is_session_fresh(now_ms):
+            self._start_session(now_ms)
+            return
+
+        key_code, action, key_name = self._button_queue.pop(0)
+        seq = self._next_seq & 0xFFFF
+        self._next_seq = (self._next_seq + 1) & 0xFFFF
+
+        payload = bytearray(10)
+        payload[0:4] = self._word_le(self._session_ts or 0)
+        payload[4:6] = self._hw_le(seq)
+        payload[6] = key_code
+        payload[7] = action
+        payload[8:10] = self._hw_le(0)
+
+        self._send_cmd(MSG_BUTTON_EVENT, payload)
+        self._inflight_seq = seq
+        self._inflight_event = (key_code, action, key_name)
+        self._inflight_deadline_ms = now_ms + 700
+        act = "press" if action == ACTION_PRESS else "release"
+        self.status.emit(f"Sent {key_name} {act}")
+
+    def _start_session(self, now_ms: int) -> None:
+        self._session_pending = True
+        self._session_ts = now_ms & 0xFFFFFFFF
+        payload = bytearray(4)
+        payload[0:4] = self._word_le(self._session_ts)
+        self._send_cmd(MSG_SESSION_INIT, payload)
+
+    def _is_session_fresh(self, now_ms: int) -> bool:
+        if self._session_ts is None:
+            return False
+        return (now_ms - self._session_ts) < 5000
+
+    def _send_cmd(self, msg_type: int, payload: bytes) -> None:
+        msg = bytearray(4 + len(payload))
+        msg[0:2] = self._hw_le(msg_type)
+        msg[2:4] = self._hw_le(len(payload))
+        msg[4 : 4 + len(payload)] = payload
+
+        msg_len = len(msg)
+        if msg_len % 2:
+            msg += b"\x00"
+            msg_len += 1
+
+        packet = bytearray(8 + msg_len)
+        packet[0:2] = b"\xAB\xCD"
+        packet[2:4] = self._hw_le(msg_len)
+        packet[4 : 4 + msg_len] = msg
+
+        crc = self._calc_crc(packet, 4, msg_len)
+        packet[4 + msg_len : 6 + msg_len] = self._hw_le(crc)
+        packet[6 + msg_len : 8 + msg_len] = b"\xDC\xBA"
+
+        body = bytearray(packet[4 : 6 + msg_len])
+        self._obfus(body)
+        packet[4 : 6 + msg_len] = body
+
+        self._serial.write(packet)
+        self.tx_log.emit(bytes(packet))
+
+    @staticmethod
+    def _obfus(buf: bytearray) -> None:
+        n = len(OBFUS_TBL)
+        for i in range(len(buf)):
+            buf[i] ^= OBFUS_TBL[i % n]
+
+    @staticmethod
+    def _hw_le(n: int) -> bytes:
+        return bytes((n & 0xFF, (n >> 8) & 0xFF))
+
+    @staticmethod
+    def _word_le(n: int) -> bytes:
+        return bytes((n & 0xFF, (n >> 8) & 0xFF, (n >> 16) & 0xFF, (n >> 24) & 0xFF))
+
+    @staticmethod
+    def _calc_crc(buf: bytearray, off: int, size: int) -> int:
+        crc = 0
+        for i in range(size):
+            b = buf[off + i] & 0xFF
+            crc ^= b << 8
+            for _ in range(8):
+                if (crc >> 15) & 1:
+                    crc = ((crc << 1) ^ 0x1021) & 0xFFFF
+                else:
+                    crc = (crc << 1) & 0xFFFF
+        return crc
 
     def _apply_diff(self, payload: bytes) -> None:
         i = 0
@@ -177,8 +435,8 @@ class K5Receiver(QtCore.QObject):
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, port: str, baud: int) -> None:
         super().__init__()
-        self.setWindowTitle("K5 Qt Viewer + Byte Logger")
-        self.resize(1300, 800)
+        self.setWindowTitle("K5 Qt Viewer + Remote Keypad + Byte Logger")
+        self.resize(1360, 840)
 
         central = QtWidgets.QWidget()
         root = QtWidgets.QHBoxLayout(central)
@@ -213,6 +471,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.status_lbl = QtWidgets.QLabel("Starting...")
         left.addWidget(self.status_lbl)
 
+        self.remote_box = QtWidgets.QGroupBox("Remote Keypad")
+        self.remote_grid = QtWidgets.QGridLayout(self.remote_box)
+        right.addWidget(self.remote_box)
+
         self.rx_box = QtWidgets.QPlainTextEdit()
         self.tx_box = QtWidgets.QPlainTextEdit()
         for box in (self.rx_box, self.tx_box):
@@ -236,9 +498,34 @@ class MainWindow(QtWidgets.QMainWindow):
         self.receiver.tx_log.connect(lambda b: self._append_bytes(self.tx_box, b, "TX"))
         self.clear_logs_btn.clicked.connect(self._clear_logs)
 
+        self._build_remote_keypad()
+
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:  # noqa: N802
         self.receiver.close()
         super().closeEvent(event)
+
+    def _build_remote_keypad(self) -> None:
+        # Matches radio keypad layout.
+        layout = [
+            ["MENU", "UP", "DOWN", "EXIT"],
+            ["1", "2", "3", "STAR"],
+            ["4", "5", "6", "0"],
+            ["7", "8", "9", "F"],
+            ["SIDE1", "SIDE2", "", ""],
+        ]
+
+        for r, row in enumerate(layout):
+            for c, key_name in enumerate(row):
+                if not key_name:
+                    continue
+                btn = QtWidgets.QPushButton(key_name)
+                btn.setMinimumHeight(34)
+                btn.clicked.connect(lambda _checked=False, name=key_name: self.receiver.queue_button_tap(name))
+                self.remote_grid.addWidget(btn, r, c)
+
+        hint = QtWidgets.QLabel("Click = key tap (press+release).")
+        hint.setStyleSheet("color: #777;")
+        self.remote_grid.addWidget(hint, len(layout), 0, 1, 4)
 
     def _clear_logs(self) -> None:
         self.rx_box.clear()
