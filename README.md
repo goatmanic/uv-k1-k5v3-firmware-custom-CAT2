@@ -373,3 +373,10 @@ You may obtain a copy of the License at
     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
     See the License for the specific language governing permissions and
     limitations under the License.
+
+## UART remote button receiver concept
+
+A design proposal for safely sending button events from a PC to the radio (with framing, ACKs, sequence numbers, and queueing to avoid UART collisions/crashes) is available here:
+
+- `tools/serialtool/button-receiver-design.md`
+

@@ -24,6 +24,9 @@
     #include "app/fm.h"
 #endif
 #include "app/uart.h"
+#ifdef ENABLE_UART_BUTTON_RX
+    #include "app/remote_key.h"
+#endif
 #include "board.h"
 #include "py32f071_ll_dma.h"
 #include "driver/backlight.h"
@@ -152,6 +155,26 @@ typedef struct {
     } Data;
 } REPLY_052D_t;
 
+
+#ifdef ENABLE_UART_BUTTON_RX
+typedef struct {
+    Header_t Header;
+    uint32_t Timestamp;
+    uint16_t Seq;
+    uint8_t  KeyCode;
+    uint8_t  Action;
+    uint16_t HoldMs;
+} CMD_0610_t;
+
+typedef struct {
+    Header_t Header;
+    struct {
+        uint16_t Seq;
+        uint8_t  Status;
+        uint8_t  QueueDepth;
+    } Data;
+} REPLY_0611_t;
+#endif
 
 #ifdef ENABLE_EXTRA_UART_CMD
 typedef struct {
@@ -782,6 +805,57 @@ bool UART_IsCommandAvailable(uint32_t Port)
     return CRC_Calculate(pUART_Command->Buffer, Size) == Crc;
 }
 
+#ifdef ENABLE_UART_BUTTON_RX
+static void CMD_0610(uint32_t Port, const uint8_t *pBuffer)
+{
+    const CMD_0610_t *pCmd = (const CMD_0610_t *)pBuffer;
+    REPLY_0611_t Reply;
+    uint32_t Timestamp = 0;
+
+    if(0) {}
+#if defined(ENABLE_UART)
+    else if (Port == UART_PORT_UART)
+    {
+        Timestamp = UART_Timestamp;
+    }
+#endif
+#if defined(ENABLE_USB)
+    else if (Port == UART_PORT_VCP)
+    {
+        Timestamp = VCP_Timestamp;
+    }
+#endif
+
+    Reply.Header.ID = 0x0611;
+    Reply.Header.Size = sizeof(Reply.Data);
+    Reply.Data.Seq = pCmd->Seq;
+    Reply.Data.QueueDepth = REMOTEKEY_GetQueueDepth();
+
+    if (pCmd->Timestamp != Timestamp)
+    {
+        Reply.Data.Status = REMOTE_KEY_ACK_STALE;
+        SendReply(Port, &Reply, sizeof(Reply));
+        return;
+    }
+
+#ifdef ENABLE_FEAT_F4HWN_SCREENSHOT
+    if (gUART_LockScreenshot > 0)
+    {
+        Reply.Data.Status = REMOTE_KEY_ACK_BUSY;
+        SendReply(Port, &Reply, sizeof(Reply));
+        return;
+    }
+#endif
+
+    gSerialConfigCountDown_500ms = 12; // 6 sec
+
+    Reply.Data.Status = REMOTEKEY_Enqueue((KEY_Code_t)pCmd->KeyCode, pCmd->Action);
+    Reply.Data.QueueDepth = REMOTEKEY_GetQueueDepth();
+
+    SendReply(Port, &Reply, sizeof(Reply));
+}
+#endif
+
 void UART_HandleCommand(uint32_t Port)
 {
     UART_Command_t *pUART_Command;
@@ -841,6 +915,12 @@ void UART_HandleCommand(uint32_t Port)
 
         case 0x052F:
             CMD_052F(Port, pUART_Command->Buffer);
+            break;
+#endif
+
+#ifdef ENABLE_UART_BUTTON_RX
+        case 0x0610:
+            CMD_0610(Port, pUART_Command->Buffer);
             break;
 #endif
 
