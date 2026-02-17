@@ -49,6 +49,11 @@ ACK_STATUS = {
     3: "stale",
 }
 
+SESSION_TIMEOUT_MS = 500
+SESSION_RETRY_INTERVAL_MS = 300
+BUTTON_ACK_TIMEOUT_MS = 700
+BUTTON_RETRY_LIMIT = 4
+
 KEY_CODES = {
     "0": 0,
     "1": 1,
@@ -128,6 +133,7 @@ class K5Receiver(QtCore.QObject):
     status = QtCore.Signal(str)
     rx_log = QtCore.Signal(bytes)
     tx_log = QtCore.Signal(bytes)
+    cmd_diag = QtCore.Signal(str)
 
     def __init__(self, port: str, baud: int = 38400, parent: QtCore.QObject | None = None) -> None:
         super().__init__(parent)
@@ -138,10 +144,13 @@ class K5Receiver(QtCore.QObject):
 
         self._session_ts: int | None = None
         self._session_pending = False
-        self._button_queue: list[tuple[int, int, str]] = []
+        self._session_deadline_ms = 0
+        self._last_session_attempt_ms = 0
+
+        self._button_queue: list[tuple[int, int, str, int]] = []
         self._next_seq = 1
         self._inflight_seq: int | None = None
-        self._inflight_event: tuple[int, int, str] | None = None
+        self._inflight_event: tuple[int, int, str, int] | None = None
         self._inflight_deadline_ms = 0
 
         self._keepalive_timer = QtCore.QTimer(self)
@@ -179,8 +188,8 @@ class K5Receiver(QtCore.QObject):
             self.status.emit(f"Unknown key: {key_name}")
             return
 
-        self._button_queue.append((key_code, ACTION_PRESS, key_name))
-        self._button_queue.append((key_code, ACTION_RELEASE, key_name))
+        self._button_queue.append((key_code, ACTION_PRESS, key_name, 0))
+        self._button_queue.append((key_code, ACTION_RELEASE, key_name, 0))
         self.status.emit(f"Queued tap: {key_name}")
 
     def poll(self) -> None:
@@ -241,12 +250,16 @@ class K5Receiver(QtCore.QObject):
 
             msg_type, payload = msg
             if msg_type == MSG_SESSION_INFO:
+                session_ts = self._word_from_payload(payload, 0)
+                self.cmd_diag.emit(f"RX 0x0515 session_info ts=0x{session_ts:08X}")
                 self._session_pending = False
                 self.status.emit("Remote keypad session established")
             elif msg_type == MSG_BUTTON_ACK and len(payload) >= 4:
                 seq = payload[0] | (payload[1] << 8)
                 status = payload[2]
                 qdepth = payload[3]
+                label = ACK_STATUS.get(status, f"unknown({status})")
+                self.cmd_diag.emit(f"RX 0x0611 button_ack seq={seq} status={label} qdepth={qdepth}")
 
                 if self._inflight_seq is None:
                     continue
@@ -258,13 +271,12 @@ class K5Receiver(QtCore.QObject):
                 self._inflight_seq = None
                 self._inflight_event = None
 
-                label = ACK_STATUS.get(status, f"unknown({status})")
                 if status == 0:
                     self.status.emit(f"Button ACK: {label}, queue_depth={qdepth}")
                 elif status in (1, 3):
                     # busy/stale -> retry event (front of queue)
                     if event is not None:
-                        self._button_queue.insert(0, event)
+                        self._requeue_event(event)
                     if status == 3:
                         self._session_ts = None
                         self._session_pending = False
@@ -317,12 +329,23 @@ class K5Receiver(QtCore.QObject):
         del buf[:total]
         return msg_type, payload
 
+    @staticmethod
+    def _word_from_payload(payload: bytes, off: int = 0) -> int:
+        if len(payload) < off + 4:
+            return 0
+        return payload[off] | (payload[off + 1] << 8) | (payload[off + 2] << 16) | (payload[off + 3] << 24)
+
     def _service_button_tx(self) -> None:
         now_ms = int(time.time() * 1000)
 
+        if self._session_pending and now_ms >= self._session_deadline_ms:
+            self._session_pending = False
+            self._session_ts = None
+            self.status.emit("Remote keypad session timeout")
+
         if self._inflight_seq is not None and now_ms >= self._inflight_deadline_ms:
             if self._inflight_event is not None:
-                self._button_queue.insert(0, self._inflight_event)
+                self._requeue_event(self._inflight_event)
             self._inflight_seq = None
             self._inflight_event = None
             self.status.emit("Button ACK timeout, retrying")
@@ -334,10 +357,12 @@ class K5Receiver(QtCore.QObject):
             return
 
         if not self._is_session_fresh(now_ms):
+            if (now_ms - self._last_session_attempt_ms) < SESSION_RETRY_INTERVAL_MS:
+                return
             self._start_session(now_ms)
             return
 
-        key_code, action, key_name = self._button_queue.pop(0)
+        key_code, action, key_name, retries = self._button_queue.pop(0)
         seq = self._next_seq & 0xFFFF
         self._next_seq = (self._next_seq + 1) & 0xFFFF
 
@@ -348,19 +373,34 @@ class K5Receiver(QtCore.QObject):
         payload[7] = action
         payload[8:10] = self._hw_le(0)
 
+        act = "press" if action == ACTION_PRESS else "release"
+        self.cmd_diag.emit(
+            f"TX 0x0610 button_event key={key_name} action={act} seq={seq} ts=0x{(self._session_ts or 0):08X}"
+        )
         self._send_cmd(MSG_BUTTON_EVENT, payload)
         self._inflight_seq = seq
-        self._inflight_event = (key_code, action, key_name)
-        self._inflight_deadline_ms = now_ms + 700
-        act = "press" if action == ACTION_PRESS else "release"
+        self._inflight_event = (key_code, action, key_name, retries)
+        self._inflight_deadline_ms = now_ms + BUTTON_ACK_TIMEOUT_MS
         self.status.emit(f"Sent {key_name} {act}")
 
     def _start_session(self, now_ms: int) -> None:
         self._session_pending = True
+        self._last_session_attempt_ms = now_ms
+        self._session_deadline_ms = now_ms + SESSION_TIMEOUT_MS
         self._session_ts = now_ms & 0xFFFFFFFF
         payload = bytearray(4)
         payload[0:4] = self._word_le(self._session_ts)
+        self.cmd_diag.emit(f"TX 0x0514 session_init ts=0x{self._session_ts:08X}")
         self._send_cmd(MSG_SESSION_INIT, payload)
+
+    def _requeue_event(self, event: tuple[int, int, str, int]) -> None:
+        key_code, action, key_name, retries = event
+        retries += 1
+        if retries > BUTTON_RETRY_LIMIT:
+            act = "press" if action == ACTION_PRESS else "release"
+            self.status.emit(f"Dropped {key_name} {act}: retry limit exceeded")
+            return
+        self._button_queue.insert(0, (key_code, action, key_name, retries))
 
     def _is_session_fresh(self, now_ms: int) -> bool:
         if self._session_ts is None:
@@ -477,7 +517,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.rx_box = QtWidgets.QPlainTextEdit()
         self.tx_box = QtWidgets.QPlainTextEdit()
-        for box in (self.rx_box, self.tx_box):
+        self.diag_box = QtWidgets.QPlainTextEdit()
+        for box in (self.rx_box, self.tx_box, self.diag_box):
             box.setReadOnly(True)
             box.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
             font = QtGui.QFont("Courier New")
@@ -488,6 +529,8 @@ class MainWindow(QtWidgets.QMainWindow):
         right.addWidget(self.rx_box)
         right.addWidget(QtWidgets.QLabel("TX Bytes (PC -> radio)"))
         right.addWidget(self.tx_box)
+        right.addWidget(QtWidgets.QLabel("Protocol Diagnostics (0x0514/0x0515/0x0610/0x0611)"))
+        right.addWidget(self.diag_box)
 
         self.setCentralWidget(central)
 
@@ -496,6 +539,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.receiver.status.connect(self.status_lbl.setText)
         self.receiver.rx_log.connect(lambda b: self._append_bytes(self.rx_box, b, "RX"))
         self.receiver.tx_log.connect(lambda b: self._append_bytes(self.tx_box, b, "TX"))
+        self.receiver.cmd_diag.connect(self._append_diag)
         self.clear_logs_btn.clicked.connect(self._clear_logs)
 
         self._build_remote_keypad()
@@ -530,12 +574,18 @@ class MainWindow(QtWidgets.QMainWindow):
     def _clear_logs(self) -> None:
         self.rx_box.clear()
         self.tx_box.clear()
+        self.diag_box.clear()
 
     def _append_bytes(self, box: QtWidgets.QPlainTextEdit, data: bytes, tag: str) -> None:
         ts = dt.datetime.now().strftime("%H:%M:%S.%f")[:-3]
         hexline = " ".join(f"{x:02X}" for x in data)
         box.appendPlainText(f"[{ts}] {tag} {len(data):3d}B | {hexline}")
         box.verticalScrollBar().setValue(box.verticalScrollBar().maximum())
+
+    def _append_diag(self, text: str) -> None:
+        ts = dt.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        self.diag_box.appendPlainText(f"[{ts}] {text}")
+        self.diag_box.verticalScrollBar().setValue(self.diag_box.verticalScrollBar().maximum())
 
     def _on_theme_changed(self, theme: str) -> None:
         if theme == "Grey":
