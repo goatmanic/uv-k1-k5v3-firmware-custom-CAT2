@@ -838,17 +838,10 @@ static void CMD_0610(uint32_t Port, const uint8_t *pBuffer)
         return;
     }
 
-#ifdef ENABLE_FEAT_F4HWN_SCREENSHOT
-    if (gUART_LockScreenshot > 0)
-    {
-        Reply.Data.Status = REMOTE_KEY_ACK_BUSY;
-        SendReply(Port, &Reply, sizeof(Reply));
-        return;
-    }
-#endif
-
     gSerialConfigCountDown_500ms = 12; // 6 sec
 
+    // Accept remote key events even while screenshot streaming is active.
+    // Otherwise each command refreshes gUART_LockScreenshot and causes perpetual BUSY replies.
     Reply.Data.Status = REMOTEKEY_Enqueue((KEY_Code_t)pCmd->KeyCode, pCmd->Action);
     Reply.Data.QueueDepth = REMOTEKEY_GetQueueDepth();
 
