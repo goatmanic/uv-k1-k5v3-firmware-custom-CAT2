@@ -308,9 +308,10 @@ static void SendVersion(uint32_t Port)
 {
     REPLY_0514_t Reply;
 
+    memset(&Reply, 0, sizeof(Reply));
     Reply.Header.ID = 0x0515;
     Reply.Header.Size = sizeof(Reply.Data);
-    strcpy(Reply.Data.Version, Version);
+    strncpy(Reply.Data.Version, Version, sizeof(Reply.Data.Version) - 1);
     Reply.Data.bHasCustomAesKey = bHasCustomAesKey;
     Reply.Data.bIsInLockScreen = bIsInLockScreen;
     Reply.Data.Challenge[0] = gChallenge[0];
@@ -874,6 +875,8 @@ void UART_HandleCommand(uint32_t Port)
     switch (pUART_Command->Header.ID)
     {
         case 0x0514:
+            if (pUART_Command->Header.Size < sizeof(uint32_t))
+                break;
             CMD_0514(Port, pUART_Command->Buffer);
             break;
 
@@ -913,6 +916,8 @@ void UART_HandleCommand(uint32_t Port)
 
 #ifdef ENABLE_UART_BUTTON_RX
         case 0x0610:
+            if (pUART_Command->Header.Size < (sizeof(CMD_0610_t) - sizeof(Header_t)))
+                break;
             CMD_0610(Port, pUART_Command->Buffer);
             break;
 #endif
