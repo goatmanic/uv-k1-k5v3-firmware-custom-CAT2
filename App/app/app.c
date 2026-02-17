@@ -35,6 +35,9 @@
 #endif
 #include "app/generic.h"
 #include "app/main.h"
+#ifdef ENABLE_UART_BUTTON_RX
+    #include "app/remote_key.h"
+#endif
 #include "app/menu.h"
 #include "app/scanner.h"
 #if defined(ENABLE_UART) || defined(ENABLE_USB)
@@ -1296,6 +1299,11 @@ static void CheckKeys(void)
 
     // scan the hardware keys
     KEY_Code_t Key = KEYBOARD_Poll();
+
+#ifdef ENABLE_UART_BUTTON_RX
+    REMOTEKEY_ProcessQueue();
+    Key = REMOTEKEY_MergeWithHardware(Key);
+#endif
 
     if (Key != KEY_INVALID) // any key pressed
         boot_counter_10ms = 0;   // cancel boot screen/beeps if any key pressed

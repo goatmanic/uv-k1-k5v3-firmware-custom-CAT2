@@ -206,6 +206,9 @@ enable_feature(ENABLE_FEAT_F4HWN_DEBUG)
 
 enable_feature(ENABLE_AGC_SHOW_DATA)
 enable_feature(ENABLE_UART_RW_BK_REGS)
+enable_feature(ENABLE_UART_BUTTON_RX
+    app/remote_key.c
+)
 
 # ---- COMPILER/LINKER OPTIONS ----
 
