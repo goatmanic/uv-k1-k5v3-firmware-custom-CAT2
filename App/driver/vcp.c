@@ -41,6 +41,7 @@ void VCP_Init()
 bool VCP_ScreenshotPing(void)
 {
     static uint32_t read_ptr = 0;
+    static uint8_t state = 0;
 
     uint32_t write_ptr = VCP_RxBufPointer;
 
@@ -52,9 +53,34 @@ bool VCP_ScreenshotPing(void)
         if (read_ptr >= VCP_RX_BUF_SIZE)
             read_ptr = 0;
 
-        if (b == 0x55)
+        switch (state)
         {
-            return true;
+            default:
+            case 0:
+                state = (b == 0x55) ? 1 : 0;
+                break;
+
+            case 1:
+                if (b == 0xAA)
+                    state = 2;
+                else
+                    state = (b == 0x55) ? 1 : 0;
+                break;
+
+            case 2:
+                if (b == 0x00)
+                    state = 3;
+                else
+                    state = (b == 0x55) ? 1 : 0;
+                break;
+
+            case 3:
+                state = 0;
+                if (b == 0x00)
+                    return true;
+                if (b == 0x55)
+                    state = 1;
+                break;
         }
     }
     return false;
